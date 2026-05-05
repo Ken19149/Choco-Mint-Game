@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Choco-Mint Canvas</title>
+    <style>
+        body {
+            background-color: #fdf6e3; /* Soft warm background */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+            color: #4a3b32; /* Chocolate brown text */
+        }
+        .container {
+            max-width: 400px;
+            margin: 50px auto;
+            background: #ffffff;
+            padding: 30px;
+            border-radius: 20px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.05);
+        }
+        input {
+            width: 80%;
+            padding: 15px;
+            margin: 15px 0;
+            border: 2px solid #a8e6cf; /* Pastel mint border */
+            border-radius: 15px;
+            font-size: 18px;
+            text-align: center;
+            outline: none;
+        }
+        button {
+            background-color: #a8e6cf; /* Pastel mint */
+            color: #4a3b32;
+            border: none;
+            padding: 15px 30px;
+            font-size: 18px;
+            font-weight: bold;
+            border-radius: 15px;
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+        button:active {
+            transform: scale(0.95);
+        }
+        #gameScreen {
+            display: none; /* Hidden until they log in */
+        }
+        canvas {
+            -webkit-touch-callout: none; /* Disables the iOS long-press popup */
+            -webkit-user-select: none;   /* Disables text selection on Safari */
+            user-select: none;           /* Disables text selection everywhere else */
+            touch-action: none;          /* Stops the browser from scrolling when you tap */
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loginScreen" class="container">
+        <h2>Join the Canvas</h2>
+        <p>Help us map the flavor.</p>
+        <input type="text" id="usernameInput" placeholder="Enter your name..." autocomplete="off">
+        <br>
+        <button onclick="joinGame()">Enter</button>
+    </div>
+
+    <div id="gameScreen" class="container">
+        <h2 id="welcomeMsg">Waiting for assignment...</h2>
+        <div id="playerStats"></div>
+        </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let mySector = null;
+
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        let cellSize = 50; // We will calculate this dynamically now
+
+        // 1. Completely block the right-click/long-press menu
+        canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault(); 
+        });
+
+        // 2. Add e.preventDefault() to your pointerdown
+        canvas.addEventListener('pointerdown', (e) => {
+            e.preventDefault(); // Stop the browser from attempting default touch behaviors
+            if (activeInterval) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.floor((e.clientX - rect.left) / cellSize);
+            const y = Math.floor((e.clientY - rect.top) / cellSize);
+
+            if (x < 0 || x >= mySector.bounds.width || y < 0 || y >= mySector.bounds.height) return;
+
+            const targetColor = mySector.pixels[y][x];
+            const flavor = getFlavorType(targetColor);
+            const cellKey = `${x},${y}`;
+
+            if (flavor === 'mint') {
+                pressTimer = setTimeout(() => {
+                    revealPixel(x, y, targetColor);
+                }, 1500); 
+            } else {
+                if (!tapCounts[cellKey]) tapCounts[cellKey] = 0;
+                tapCounts[cellKey]++;
+                
+                if (tapCounts[cellKey] >= 3) {
+                    revealPixel(x, y, targetColor);
+                }
+            }
+        });
+
+        // 3. Make the cancellation bulletproof
+        function cancelMintHold() {
+            clearInterval(activeInterval);
+            activeInterval = null; // THE FIX: Reset the lock
+            
+            if (activeMintCell) {
+                drawMintProgress(activeMintCell.x, activeMintCell.y, mintProgress[activeMintCell.key], false);
+                activeMintCell = null;
+            }
+        }
+        
+        // Cancel if they lift up, drag out of the canvas, or if the OS interrupts
+        canvas.addEventListener('pointerup', cancelMintHold);
+        canvas.addEventListener('pointerout', cancelMintHold);
+        canvas.addEventListener('pointercancel', cancelMintHold);
+
+        function joinGame() {
+            const username = document.getElementById('usernameInput').value.trim();
+            if (username === '') return;
+
+            socket.emit('player_join', username);
+
+            document.getElementById('loginScreen').style.display = 'none';
+            document.getElementById('gameScreen').style.display = 'block';
+            document.getElementById('welcomeMsg').innerText = `Joining...`;
+            
+            document.getElementById('gameScreen').appendChild(canvas);
+        }
+
+        socket.on('waiting_in_lobby', () => {
+            document.getElementById('welcomeMsg').innerText = "Waiting for the Host to start...";
+        });
+
+        // Update the game_start listener to accept the history
+        socket.on('game_start', (data) => {
+            if (!data.sector) {
+                document.getElementById('welcomeMsg').innerText = "Canvas is fully assigned!";
+                return;
+            }
+
+            mySector = data.sector;
+            document.getElementById('welcomeMsg').innerText = `Sector ${mySector.id} Assigned!`;
+
+            const screenWidth = window.innerWidth - 60; 
+            cellSize = Math.floor(screenWidth / mySector.bounds.width);
+            if (cellSize > 40) cellSize = 40; 
+
+            canvas.width = mySector.bounds.width * cellSize;
+            canvas.height = mySector.bounds.height * cellSize;
+            
+            canvas.style.border = "4px solid #a8e6cf";
+            canvas.style.borderRadius = "10px";
+            canvas.style.marginTop = "20px";
+            canvas.style.imageRendering = "pixelated"; 
+
+            drawHiddenGrid();
+
+            // NEW: Draw the history instantly!
+            data.history.forEach(p => {
+                // Translate the absolute master coordinate back to the phone's local grid
+                const localX = p.x - mySector.bounds.minX;
+                const localY = p.y - mySector.bounds.minY;
+                
+                // Reveal it, but tell the function NOT to emit it back to the server
+                revealPixel(localX, localY, p.color, false); 
+            });
+        });
+
+        function drawProofOfConcept() {
+            for (let y = 0; y < mySector.bounds.height; y++) {
+                for (let x = 0; x < mySector.bounds.width; x++) {
+                    const hexColor = mySector.pixels[y][x];
+                    
+                    ctx.fillStyle = hexColor;
+                    ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                    
+                    ctx.strokeStyle = "rgba(0,0,0,0.1)";
+                    ctx.strokeRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                }
+            }
+        }
+
+        let paintedPixels = 0;
+        
+        // 1. Draw the hidden grid first
+        function drawHiddenGrid() {
+            for (let y = 0; y < mySector.bounds.height; y++) {
+                for (let x = 0; x < mySector.bounds.width; x++) {
+                    ctx.fillStyle = "#ffffff"; // Blank white squares
+                    ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                    
+                    ctx.strokeStyle = "rgba(0,0,0,0.1)"; // Subtle grid lines
+                    ctx.strokeRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                }
+            }
+        }
+
+        // Call this inside socket.on('game_start') instead of drawProofOfConcept()
+        // drawHiddenGrid();
+
+        // 2. The Game Logic
+        let activeInterval; // Replaces pressTimer
+        let tapCounts = {}; 
+        let mintProgress = {}; // NEW: Saves partial progress for mint holds
+        let activeMintCell = null; 
+        let finishedCells = new Set(); 
+
+        function getFlavorType(hex) {
+            const color = hex.toLowerCase();
+            const mintColors = ['#d4edda', '#a8e6cf', '#56b896'];
+            return mintColors.includes(color) ? 'mint' : 'chocolate';
+        }
+
+        // Draws the cell based on how much progress they've made
+        function drawMintProgress(x, y, progress, isActive) {
+            const fillHeight = (progress / 1000) * cellSize; // 1000ms = 1 second
+            
+            // Draw background
+            ctx.fillStyle = isActive ? "#e0f7fa" : "#ffffff";
+            ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+            
+            // Draw the rising "liquid" progress
+            ctx.fillStyle = isActive ? "#a8e6cf" : "rgba(168, 230, 207, 0.5)"; 
+            ctx.fillRect(x * cellSize, (y * cellSize) + (cellSize - fillHeight), cellSize, fillHeight);
+            
+            ctx.strokeStyle = "rgba(0,0,0,0.1)";
+            ctx.strokeRect(x * cellSize, y * cellSize, cellSize, cellSize);
+        }
+
+        function resetCell(x, y) {
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+            ctx.strokeStyle = "rgba(0,0,0,0.1)";
+            ctx.strokeRect(x * cellSize, y * cellSize, cellSize, cellSize);
+        }
+
+        canvas.addEventListener('contextmenu', (e) => { e.preventDefault(); });
+
+        canvas.addEventListener('pointerdown', (e) => {
+            e.preventDefault(); 
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.floor((e.clientX - rect.left) / cellSize);
+            const y = Math.floor((e.clientY - rect.top) / cellSize);
+
+            if (x < 0 || x >= mySector.bounds.width || y < 0 || y >= mySector.bounds.height) return;
+
+            const cellKey = `${x},${y}`;
+            if (finishedCells.has(cellKey)) return; // Block touches on finished cells
+
+            clearInterval(activeInterval); // Clear any running intervals
+            
+            // If they were holding a different mint cell, pause its visual state
+            if (activeMintCell && activeMintCell.key !== cellKey) {
+                drawMintProgress(activeMintCell.x, activeMintCell.y, mintProgress[activeMintCell.key], false);
+            }
+
+            const targetColor = mySector.pixels[y][x];
+            const flavor = getFlavorType(targetColor);
+
+            if (flavor === 'mint') {
+                activeMintCell = { x, y, key: cellKey };
+                if (!mintProgress[cellKey]) mintProgress[cellKey] = 0;
+
+                // Loop every 50ms to accumulate time and draw the rising liquid
+                activeInterval = setInterval(() => {
+                    mintProgress[cellKey] += 50; 
+                    
+                    drawMintProgress(x, y, mintProgress[cellKey], true);
+
+                    // Reached 1 second (1000ms)!
+                    if (mintProgress[cellKey] >= 1000) {
+                        clearInterval(activeInterval);
+                        revealPixel(x, y, targetColor);
+                        activeMintCell = null;
+                    }
+                }, 50);
+
+            } else {
+                // CHOCOLATE LOGIC
+                if (!tapCounts[cellKey]) tapCounts[cellKey] = 0;
+                tapCounts[cellKey]++;
+                
+                ctx.fillStyle = "#f5ece6"; 
+                ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                
+                setTimeout(() => {
+                    if (tapCounts[cellKey] < 3 && !finishedCells.has(cellKey)) {
+                        resetCell(x, y);
+                    }
+                }, 100);
+
+                if (tapCounts[cellKey] >= 3) {
+                    revealPixel(x, y, targetColor);
+                }
+            }
+        });
+
+        function cancelMintHold() {
+            clearInterval(activeInterval);
+            // If they lift off early, pause the liquid and make it faded
+            if (activeMintCell) {
+                drawMintProgress(activeMintCell.x, activeMintCell.y, mintProgress[activeMintCell.key], false);
+                activeMintCell = null;
+            }
+        }
+        
+        window.addEventListener('pointerup', cancelMintHold);
+        window.addEventListener('pointercancel', cancelMintHold);
+        window.addEventListener('touchend', cancelMintHold); 
+
+        function revealPixel(x, y, color, shouldEmit = true) {
+            const cellKey = `${x},${y}`;
+            if (finishedCells.has(cellKey)) return; 
+            finishedCells.add(cellKey); 
+
+            ctx.fillStyle = color;
+            ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+            ctx.strokeStyle = "rgba(0,0,0,0.1)";
+            ctx.strokeRect(x * cellSize, y * cellSize, cellSize, cellSize);
+            
+            paintedPixels++;
+
+            if (shouldEmit) {
+                const absoluteX = mySector.bounds.minX + x;
+                const absoluteY = mySector.bounds.minY + y;
+                socket.emit('pixel_painted', { x: absoluteX, y: absoluteY, color: color });
+            }
+        }
+    </script>
+</body>
+</html>

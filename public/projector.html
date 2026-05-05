@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Master Canvas</title>
+    <style>
+        body {
+            background-color: #fdf6e3;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+            color: #4a3b32;
+        }
+        h1 { font-size: 3rem; margin-bottom: 5px; }
+        #stats { font-size: 1.5rem; margin-bottom: 20px; font-weight: bold; }
+        
+        .progress-bar {
+            width: 80%;
+            max-width: 1000px;
+            height: 30px;
+            background-color: #e0e0e0;
+            border-radius: 15px;
+            margin: 0 auto 30px auto;
+            overflow: hidden;
+            box-shadow: inset 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .progress-fill {
+            height: 100%;
+            width: 0%;
+            background-color: #a8e6cf; 
+            transition: width 0.3s ease-out;
+        }
+
+        /* --- NEW FLEXBOX LAYOUT --- */
+        .dashboard-container {
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            gap: 40px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        canvas {
+            border: 8px solid #4a3b32;
+            border-radius: 15px;
+            background-color: #ffffff;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            image-rendering: pixelated; 
+        }
+
+        /* --- LEADERBOARD STYLING --- */
+        .leaderboard {
+            background: #ffffff;
+            padding: 20px;
+            border-radius: 15px;
+            border: 4px solid #a8e6cf;
+            width: 300px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+            text-align: left;
+        }
+        .leaderboard h2 {
+            margin-top: 0;
+            text-align: center;
+            border-bottom: 2px solid #fdf6e3;
+            padding-bottom: 10px;
+        }
+        .player-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 1.2rem;
+            padding: 10px 0;
+            border-bottom: 1px dashed #e0e0e0;
+            font-weight: bold;
+        }
+        .player-row:first-of-type {
+            color: #56b896; /* 1st place gets a green highlight! */
+            font-size: 1.4rem;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Choco-Mint Reveal</h1>
+
+    <button id="startBtn" style="padding: 10px 20px; font-size: 1.2rem; background: #a8e6cf; border: none; border-radius: 10px; cursor: pointer; margin-bottom: 20px; font-weight: bold;">START GAME</button>
+
+    <div id="stats">Pixels Revealed: 0 / 600</div>
+    
+    <div class="progress-bar">
+        <div id="progressFill" class="progress-fill"></div>
+    </div>
+
+    <div class="dashboard-container">
+        <canvas id="masterCanvas"></canvas>
+
+        <div class="leaderboard">
+            <h2>🏆 Top Contributors</h2>
+            <div id="leaderboard-list">
+                <div class="player-row"><span>Waiting for players...</span></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const canvas = document.getElementById('masterCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        const GRID_W = 25;
+        const GRID_H = 24;
+        const TOTAL_PIXELS = GRID_W * GRID_H;
+        let currentPixels = 0;
+
+        const CELL_SIZE = 30; 
+        canvas.width = GRID_W * CELL_SIZE;
+        canvas.height = GRID_H * CELL_SIZE;
+
+        function initBlankGrid() {
+            for (let y = 0; y < GRID_H; y++) {
+                for (let x = 0; x < GRID_W; x++) {
+                    ctx.fillStyle = "#ffffff";
+                    ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+                    ctx.strokeStyle = "rgba(0,0,0,0.05)";
+                    ctx.strokeRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+                }
+            }
+        }
+        initBlankGrid();
+
+        // --- NEW PERCENTAGE UI ---
+        function updateProgressUI() {
+            // Calculate percentage and round to 1 decimal place (e.g. "45.2%")
+            const percentage = ((currentPixels / TOTAL_PIXELS) * 100).toFixed(1);
+            
+            // Update the text and the bar
+            document.getElementById('stats').innerText = `Canvas Complete: ${percentage}%`;
+            document.getElementById('progressFill').style.width = `${percentage}%`;
+        }
+
+        // --- REUSABLE LEADERBOARD FUNCTION ---
+        function updateScoreboard(topPlayers) {
+            const listDiv = document.getElementById('leaderboard-list');
+            listDiv.innerHTML = ''; 
+            
+            if (topPlayers.length === 0) {
+                listDiv.innerHTML = '<div class="player-row"><span>Waiting for players...</span></div>';
+                return;
+            }
+
+            topPlayers.forEach((player, index) => {
+                const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
+                listDiv.innerHTML += `
+                    <div class="player-row">
+                        <span>${medal} ${player.name}</span>
+                        <span>${player.pixelsPainted}</span>
+                    </div>
+                `;
+            });
+        }
+
+        socket.emit('projector_join');
+
+        // Receives history AND the initial scoreboard
+        socket.on('init_projector', (data) => {
+            currentPixels = data.total;
+            
+            data.pixels.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x * CELL_SIZE, p.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+                ctx.strokeStyle = "rgba(0,0,0,0.1)";
+                ctx.strokeRect(p.x * CELL_SIZE, p.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+            });
+            
+            updateProgressUI();
+            updateScoreboard(data.leaderboard); // Draw the ranks immediately!
+        });
+
+        socket.on('projector_update', (data) => {
+            ctx.fillStyle = data.color;
+            ctx.fillRect(data.x * CELL_SIZE, data.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+            ctx.strokeStyle = "rgba(0,0,0,0.1)";
+            ctx.strokeRect(data.x * CELL_SIZE, data.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+
+            currentPixels++;
+            updateProgressUI();
+        });
+
+        socket.on('scoreboard_update', (topPlayers) => {
+            updateScoreboard(topPlayers);
+        });
+
+        document.getElementById('startBtn').addEventListener('click', () => {
+            socket.emit('host_start_game');
+            document.getElementById('startBtn').style.display = 'none'; // Hide it after starting
+        });
+    </script>
+</body>
+</html>
