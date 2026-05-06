@@ -16,6 +16,7 @@ let unassignedSectors = []; // Queue of work
 let completedSectors = [];  // Finished work
 let allPaintedPixels = [];  // Pixel memory log
 let gameState = 'lobby'; // Can be 'lobby' or 'playing'
+let fullImagePixels = []; // NEW: Stores the entire 25x24 image map
 
 // Grid math: 25x24 image divided into 20 players = 5 cols x 4 rows
 const SECTOR_COLS = 5;
@@ -49,6 +50,8 @@ async function initCanvasData(imagePath) {
                         const hexColor = image.getPixelColor(minX + x, minY + y);
                         const cssColor = '#' + hexColor.toString(16).slice(0, 6).padStart(6, '0');
                         row.push(cssColor);
+
+                        fullImagePixels.push({ x: minX + x, y: minY + y, color: cssColor });
                     }
                     pixelData.push(row);
                 }
@@ -83,7 +86,8 @@ io.on('connection', (socket) => {
         socket.emit('init_projector', {
             pixels: allPaintedPixels,
             total: allPaintedPixels.length,
-            leaderboard: getLeaderboard() // Send the ranks immediately
+            leaderboard: getLeaderboard(),
+            state: gameState
         });
     });
 
@@ -118,6 +122,22 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('host_reveal_canvas', () => {
+        console.log("✨ Host triggered Auto-Fill Reveal!");
+        
+        // Find every pixel that hasn't been painted yet
+        const unpaintedPixels = fullImagePixels.filter(p => !masterPixelMap.has(`${p.x},${p.y}`));
+        
+        // Mark them all as painted in the server memory
+        unpaintedPixels.forEach(p => {
+            masterPixelMap.add(`${p.x},${p.y}`);
+            allPaintedPixels.push(p);
+        });
+        
+        // Blast the missing pixels to the projector and all phones!
+        io.emit('massive_reveal', unpaintedPixels);
+    });
+
     // Helper Function to handle sector assignment and history
     function assignSectorAndStart(playerSocket) {
         let assignedSector = null;
@@ -125,7 +145,6 @@ io.on('connection', (socket) => {
         
         players[playerSocket.id].sector = assignedSector;
 
-        // Find all globally painted pixels that belong specifically to this player's new sector
         let alreadyPainted = [];
         if (assignedSector) {
              alreadyPainted = allPaintedPixels.filter(p => 
@@ -134,10 +153,15 @@ io.on('connection', (socket) => {
                  p.y >= assignedSector.bounds.minY && 
                  p.y < assignedSector.bounds.minY + assignedSector.bounds.height
              );
+             
+             // THE FIX: Inherit the points!
+             players[playerSocket.id].pixelsPainted = alreadyPainted.length;
         }
 
-        // Send the sector AND the history of that sector
         playerSocket.emit('game_start', { sector: assignedSector, history: alreadyPainted });
+        
+        // Broadcast the scoreboard instantly so the new points appear on the projector
+        io.emit('scoreboard_update', getLeaderboard());
     }
 
     // 3. PIXEL PAINTED: Give points and update

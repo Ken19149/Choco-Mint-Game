@@ -343,6 +343,25 @@
                 socket.emit('pixel_painted', { x: absoluteX, y: absoluteY, color: color });
             }
         }
+        
+        socket.on('massive_reveal', (missingPixels) => {
+            if (!mySector) return;
+            
+            // Loop through the missing pixels and only draw the ones that belong to this phone
+            missingPixels.forEach(p => {
+                if (p.x >= mySector.bounds.minX && p.x < mySector.bounds.minX + mySector.bounds.width &&
+                    p.y >= mySector.bounds.minY && p.y < mySector.bounds.minY + mySector.bounds.height) {
+                    
+                    const localX = p.x - mySector.bounds.minX;
+                    const localY = p.y - mySector.bounds.minY;
+                    
+                    // Reveal it, but don't emit it back to the server (false flag)
+                    revealPixel(localX, localY, p.color, false);
+                }
+            });
+            
+            document.getElementById('welcomeMsg').innerText = "Canvas Revealed! 🎉";
+        });
     </script>
 </body>
 </html>

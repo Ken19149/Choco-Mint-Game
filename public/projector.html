@@ -87,6 +87,8 @@
 
     <button id="startBtn" style="padding: 10px 20px; font-size: 1.2rem; background: #a8e6cf; border: none; border-radius: 10px; cursor: pointer; margin-bottom: 20px; font-weight: bold;">START GAME</button>
 
+    <button id="revealBtn" style="display: none; padding: 10px 20px; font-size: 1.2rem; background: #5d4037; color: white; border: none; border-radius: 10px; cursor: pointer; margin-bottom: 20px; font-weight: bold;">REVEAL CANVAS</button>
+
     <div id="stats">Pixels Revealed: 0 / 600</div>
     
     <div class="progress-bar">
@@ -152,7 +154,12 @@
             }
 
             topPlayers.forEach((player, index) => {
-                const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
+                // THE FIX: Only hand out medals if they have actually painted something!
+                let medal = '';
+                if (player.pixelsPainted > 0) {
+                    medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
+                }
+                
                 listDiv.innerHTML += `
                     <div class="player-row">
                         <span>${medal} ${player.name}</span>
@@ -176,7 +183,13 @@
             });
             
             updateProgressUI();
-            updateScoreboard(data.leaderboard); // Draw the ranks immediately!
+            updateScoreboard(data.leaderboard);
+
+            // THE FIX: If the game is already playing, hide Start and show Reveal!
+            if (data.state === 'playing') {
+                document.getElementById('startBtn').style.display = 'none';
+                document.getElementById('revealBtn').style.display = 'inline-block';
+            }
         });
 
         socket.on('projector_update', (data) => {
@@ -195,7 +208,26 @@
 
         document.getElementById('startBtn').addEventListener('click', () => {
             socket.emit('host_start_game');
-            document.getElementById('startBtn').style.display = 'none'; // Hide it after starting
+            document.getElementById('startBtn').style.display = 'none'; // Hide Start
+            document.getElementById('revealBtn').style.display = 'inline-block'; // SHOW REVEAL!
+        });
+        
+        document.getElementById('revealBtn').addEventListener('click', () => {
+            socket.emit('host_reveal_canvas');
+            document.getElementById('revealBtn').style.display = 'none';
+        });
+
+        socket.on('massive_reveal', (missingPixels) => {
+            missingPixels.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x * CELL_SIZE, p.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+                ctx.strokeStyle = "rgba(0,0,0,0.1)";
+                ctx.strokeRect(p.x * CELL_SIZE, p.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+            });
+            
+            currentPixels += missingPixels.length;
+            updateProgressUI();
+            document.getElementById('stats').innerText += " 🎉"; // Add a little celebration!
         });
     </script>
 </body>
