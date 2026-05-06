@@ -54,6 +54,17 @@
             user-select: none;           /* Disables text selection everywhere else */
             touch-action: none;          /* Stops the browser from scrolling when you tap */
         }
+        #canvasWrapper {
+            position: relative;
+            display: inline-block;
+            margin-top: 20px;
+        }
+        #fxCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none; /* Crucial: Lets taps pass through to the main canvas */
+        }
     </style>
 </head>
 <body>
@@ -69,7 +80,10 @@
     <div id="gameScreen" class="container">
         <h2 id="welcomeMsg">Waiting for assignment...</h2>
         <div id="playerStats"></div>
-        </div>
+        <div id="canvasWrapper"></div>
+
+        <button id="nextSectorBtn" style="display: none; width: 100%; margin-top: 20px; background-color: #56b896; color: white;">Get Next Sector!</button>
+    </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
@@ -79,40 +93,11 @@
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
         let cellSize = 50; // We will calculate this dynamically now
-
-        // 1. Completely block the right-click/long-press menu
-        canvas.addEventListener('contextmenu', (e) => {
-            e.preventDefault(); 
-        });
-
-        // 2. Add e.preventDefault() to your pointerdown
-        canvas.addEventListener('pointerdown', (e) => {
-            e.preventDefault(); // Stop the browser from attempting default touch behaviors
-            if (activeInterval) return;
-            
-            const rect = canvas.getBoundingClientRect();
-            const x = Math.floor((e.clientX - rect.left) / cellSize);
-            const y = Math.floor((e.clientY - rect.top) / cellSize);
-
-            if (x < 0 || x >= mySector.bounds.width || y < 0 || y >= mySector.bounds.height) return;
-
-            const targetColor = mySector.pixels[y][x];
-            const flavor = getFlavorType(targetColor);
-            const cellKey = `${x},${y}`;
-
-            if (flavor === 'mint') {
-                pressTimer = setTimeout(() => {
-                    revealPixel(x, y, targetColor);
-                }, 1500); 
-            } else {
-                if (!tapCounts[cellKey]) tapCounts[cellKey] = 0;
-                tapCounts[cellKey]++;
-                
-                if (tapCounts[cellKey] >= 3) {
-                    revealPixel(x, y, targetColor);
-                }
-            }
-        });
+        
+        const fxCanvas = document.createElement('canvas');
+        fxCanvas.id = "fxCanvas";
+        const fxCtx = fxCanvas.getContext('2d');
+        let particles = [];
 
         // 3. Make the cancellation bulletproof
         function cancelMintHold() {
@@ -140,7 +125,10 @@
             document.getElementById('gameScreen').style.display = 'block';
             document.getElementById('welcomeMsg').innerText = `Joining...`;
             
-            document.getElementById('gameScreen').appendChild(canvas);
+            // Append both canvases to the wrapper
+            const wrapper = document.getElementById('canvasWrapper');
+            wrapper.appendChild(canvas);
+            wrapper.appendChild(fxCanvas);
         }
 
         socket.on('waiting_in_lobby', () => {
@@ -163,6 +151,8 @@
 
             canvas.width = mySector.bounds.width * cellSize;
             canvas.height = mySector.bounds.height * cellSize;
+            fxCanvas.width = canvas.width;
+            fxCanvas.height = canvas.height;
             
             canvas.style.border = "4px solid #a8e6cf";
             canvas.style.borderRadius = "10px";
@@ -170,6 +160,7 @@
             canvas.style.imageRendering = "pixelated"; 
 
             drawHiddenGrid();
+            requestAnimationFrame(animateFX);
 
             // NEW: Draw the history instantly!
             data.history.forEach(p => {
@@ -180,6 +171,32 @@
                 // Reveal it, but tell the function NOT to emit it back to the server
                 revealPixel(localX, localY, p.color, false); 
             });
+        });
+
+        document.getElementById('nextSectorBtn').addEventListener('click', () => {
+            // Hide the button
+            document.getElementById('nextSectorBtn').style.display = 'none';
+            
+            // THE FIX: Completely wipe all state variables so the new sector is a blank slate
+            finishedCells.clear(); 
+            tapCounts = {}; 
+            mintProgress = {};
+            activeMintCell = null;
+            clearInterval(activeInterval);
+
+            // Clear the canvases
+            ctx.clearRect(0, 0, canvas.width, canvas.height); 
+            if(typeof fxCtx !== 'undefined') fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
+            
+            // Ask the server for more!
+            socket.emit('request_next_sector');
+        });
+
+        // If the server says there are no sectors left
+        socket.on('canvas_complete', () => {
+            document.getElementById('welcomeMsg').innerText = "All sectors claimed! Look at the projector!";
+            document.getElementById('canvasWrapper').style.display = 'none';
+            document.getElementById('nextSectorBtn').style.display = 'none';
         });
 
         function drawProofOfConcept() {
@@ -202,13 +219,36 @@
         function drawHiddenGrid() {
             for (let y = 0; y < mySector.bounds.height; y++) {
                 for (let x = 0; x < mySector.bounds.width; x++) {
-                    ctx.fillStyle = "#ffffff"; // Blank white squares
-                    ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
                     
-                    ctx.strokeStyle = "rgba(0,0,0,0.1)"; // Subtle grid lines
+                    const targetColor = mySector.pixels[y][x];
+                    const flavor = getFlavorType(targetColor);
+                    const cellKey = `${x},${y}`;
+
+                    if (flavor === 'neutral') {
+                        // AUTO-REVEAL: Paint it fully and lock it so they can't interact with it
+                        ctx.fillStyle = targetColor;
+                        ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                        finishedCells.add(cellKey);
+                    } else {
+                        // GAMEPLAY PIXEL: Draw the white background
+                        ctx.fillStyle = "#ffffff"; 
+                        ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                        
+                        // DRAW THE HINT: A faint 20% opacity circle in the middle
+                        ctx.fillStyle = targetColor;
+                        ctx.globalAlpha = 0.2; 
+                        ctx.beginPath();
+                        ctx.arc((x * cellSize) + (cellSize / 2), (y * cellSize) + (cellSize / 2), cellSize / 4, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.globalAlpha = 1.0; // Reset alpha back to normal
+                    }
+                    
+                    // Draw the subtle grid line over everything
+                    ctx.strokeStyle = "rgba(0,0,0,0.1)"; 
                     ctx.strokeRect(x * cellSize, y * cellSize, cellSize, cellSize);
                 }
             }
+            checkSectorComplete();
         }
 
         // Call this inside socket.on('game_start') instead of drawProofOfConcept()
@@ -224,8 +264,15 @@
         function getFlavorType(hex) {
             const color = hex.toLowerCase();
             const mintColors = ['#d4edda', '#a8e6cf', '#56b896'];
-            return mintColors.includes(color) ? 'mint' : 'chocolate';
+            const chocoColors = ['#8d6e63', '#5d4037', '#3e2723'];
+            
+            if (mintColors.includes(color)) return 'mint';
+            if (chocoColors.includes(color)) return 'chocolate';
+
+            return 'neutral';
         }
+
+        
 
         // Draws the cell based on how much progress they've made
         function drawMintProgress(x, y, progress, isActive) {
@@ -336,12 +383,19 @@
             ctx.strokeRect(x * cellSize, y * cellSize, cellSize, cellSize);
             
             paintedPixels++;
-
+            
+            // NEW: Trigger the visual juice!
+            // We only want the explosion when the user actually paints it, 
+            // not when history is loaded on boot.
             if (shouldEmit) {
+                const flavor = getFlavorType(color);
+                spawnParticles(x, y, flavor);
+                
                 const absoluteX = mySector.bounds.minX + x;
                 const absoluteY = mySector.bounds.minY + y;
                 socket.emit('pixel_painted', { x: absoluteX, y: absoluteY, color: color });
             }
+            checkSectorComplete();
         }
         
         socket.on('massive_reveal', (missingPixels) => {
@@ -362,6 +416,68 @@
             
             document.getElementById('welcomeMsg').innerText = "Canvas Revealed! 🎉";
         });
+        
+        // --- PARTICLE ENGINE LOGIC ---
+        function spawnParticles(x, y, flavor) {
+            // Find the exact center of the tapped square
+            const centerX = (x * cellSize) + (cellSize / 2);
+            const centerY = (y * cellSize) + (cellSize / 2);
+            
+            // Use our specific Kawaii hex codes for the effects
+            const colors = flavor === 'mint' 
+                ? ['#d4edda', '#ffffff', '#e0f7fa'] // Icy whites and pale mint
+                : ['#8d6e63', '#5d4037', '#3e2723']; // Milk and dark chocolate
+                
+            const particleCount = flavor === 'mint' ? 20 : 15;
+
+            for(let i = 0; i < particleCount; i++) {
+                particles.push({
+                    x: centerX,
+                    y: centerY,
+                    // Give them random burst velocities
+                    vx: (Math.random() - 0.5) * 12,
+                    vy: (Math.random() - 0.5) * 12,
+                    life: 1.0, // Opacity starts at 100%
+                    decay: 0.02 + Math.random() * 0.04, // How fast they fade
+                    color: colors[Math.floor(Math.random() * colors.length)],
+                    size: Math.random() * (cellSize / 5) + 2
+                });
+            }
+        }
+
+        function animateFX() {
+            // Clear the transparent canvas every frame
+            fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
+            
+            for(let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= p.decay;
+                
+                if(p.life <= 0) {
+                    particles.splice(i, 1); // Delete dead particles
+                } else {
+                    fxCtx.globalAlpha = p.life;
+                    fxCtx.fillStyle = p.color;
+                    fxCtx.beginPath();
+                    fxCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    fxCtx.fill();
+                }
+            }
+            fxCtx.globalAlpha = 1.0; // Reset alpha
+            requestAnimationFrame(animateFX);
+        }
+        
+        function checkSectorComplete() {
+            if (!mySector) return;
+            const totalCells = mySector.bounds.width * mySector.bounds.height;
+            
+            // If every cell in this chunk is locked, show the button!
+            if (finishedCells.size >= totalCells) {
+                document.getElementById('nextSectorBtn').style.display = 'block';
+            }
+        }
     </script>
 </body>
 </html>

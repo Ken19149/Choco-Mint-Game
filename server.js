@@ -20,7 +20,7 @@ let fullImagePixels = []; // NEW: Stores the entire 25x24 image map
 
 // Grid math: 25x24 image divided into 20 players = 5 cols x 4 rows
 const SECTOR_COLS = 5;
-const SECTOR_ROWS = 4;
+const SECTOR_ROWS = 8;
 
 // --- 1. THE IMAGE PIPELINE ---
 async function initCanvasData(imagePath) {
@@ -136,6 +136,30 @@ io.on('connection', (socket) => {
         
         // Blast the missing pixels to the projector and all phones!
         io.emit('massive_reveal', unpaintedPixels);
+    });
+    
+    // NEW: Hand out more work to fast players!
+    socket.on('request_next_sector', () => {
+        let nextSector = null;
+        if (unassignedSectors.length > 0) {
+            nextSector = unassignedSectors.shift();
+            players[socket.id].sector = nextSector;
+            
+            // Calculate the history for this NEW sector
+            let alreadyPainted = allPaintedPixels.filter(p => 
+                 p.x >= nextSector.bounds.minX && 
+                 p.x < nextSector.bounds.minX + nextSector.bounds.width &&
+                 p.y >= nextSector.bounds.minY && 
+                 p.y < nextSector.bounds.minY + nextSector.bounds.height
+             );
+             
+            // We DO NOT overwrite their score here, so they keep their points from previous sectors!
+            
+            socket.emit('game_start', { sector: nextSector, history: alreadyPainted });
+        } else {
+            // No more sectors left!
+            socket.emit('canvas_complete');
+        }
     });
 
     // Helper Function to handle sector assignment and history
