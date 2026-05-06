@@ -1,24 +1,24 @@
 # Choco-Mint Canvas Rush 🍃🍫
 
-A real-time, gamified multiplayer canvas designed to hack the trigeminal nerve and simulate the biological sensation of eating mint chocolate. Built as a creative exploration of sensory perception, empathy, and chemesthesis.
+A real-time, gamified multiplayer canvas born from the intersection of biology, art, and network sockets. It is an exploration into chemesthesis, empathy, and how we perceive the things we consume. 
 
 ## The Concept
-Mint chocolate is a polarizing flavor. Instead of trying to change taste buds, this project translates the biological sensation of the flavor into interactive mechanics. 
-* **Mint (Chemesthesis / Cooling):** Requires a sustained 1-second "freeze" hold to activate the TRPM8 receptors visually.
-* **Chocolate (Friction / Melting):** Requires rapid triple-tapping to simulate the physical friction and warmth of melting cocoa butter.
+Mint chocolate is a polarizing anomaly. Instead of attempting to change someone's biological taste buds, this project translates the physical sensation of the flavor into interactive mobile mechanics. It is the trigeminal nerve, gamified:
+* **Mint (Chemesthesis / Cooling):** Requires a sustained, 1-second "freeze" hold—watching an icy progress bar rise to activate the TRPM8 receptors visually.
+* **Chocolate (Friction / Melting):** Requires rapid triple-tapping to simulate the tactile friction and warmth of melting cocoa butter.
 
-## Tech Stack
-* **Backend:** Node.js, Express, Socket.io (Stateful memory, Leaderboards, Auto-fill reveals)
-* **Frontend:** HTML5 Canvas, Vanilla JS (Responsive grid, Touch-event listeners, Particle FX engine)
-* **Data Pipeline:** ImageMagick (Pre-processing 25x24 grids with a strict 9-color hex palette)
-* **Hosting environment:** Proxmox LXC container (Debian) exposed via local network.
+## The Architecture
+I prefer to rely less on abstracted platforms and more on local, comprehensive solutions that I can control. 
+* **Backend:** Node.js, Express, and Socket.io handling stateful memory, live leaderboards, and a coordinated auto-fill sequence.
+* **Frontend:** HTML5 Canvas and Vanilla JS, featuring a responsive grid, touch-event listeners, and a custom particle FX engine that floats above the interactive layer.
+* **Hosting:** A Debian container hosted via Proxmox. Access is routed entirely through a local network via SSH and port forwarding.
 
-## The Art Pipeline
-To maintain the visual aesthetic, the image used a limited Choco-Mint palette with light, base, and dark tone (Mint, Cocoa, and Neutrals).
+## The Art 
+The master pixel art was manually designed with the limited Choco-Mint palette, ensuring the aesthetic survives the compression of a 25x24 grid. 
 
-## Local Setup & Hosting
+## To Run Locally
 1. Clone the repository.
-2. Run `npm install` to grab Express, Socket.io, and Jimp.
-3. Place a `pixel_test.png` (25x24px) in the root directory.
+2. Run `npm install`.
+3. Ensure the `pixel_test.png` is in the root directory.
 4. Run `node server.js`.
-5. Connect devices to `http://<your-local-ip>:3000`. The host controls the lobby and the final canvas reveal via the `/projector.html` dashboard.
+5. Connect your device to the forwarded port. The host controls the lobby pacing and the final canvas reveal through the `/projector.html` dashboard.
